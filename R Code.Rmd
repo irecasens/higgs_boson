@@ -1,0 +1,2845 @@
+---
+title: "Machine Learning Internal Competition"
+author: "Ignacio Recasens"
+date: "28th June 2017"
+output: html_document
+---
+
+```{r Load Libraries}
+
+library(RevoScaleR)
+library(rmarkdown)
+library(plyr)
+library(dplyr)
+library(caret)
+library(caTools)
+library(ggplot2)
+library(corrplot)
+library(ROCR)
+library(e1071)
+library(plotly)
+library(GGally)
+library(grid)
+library(gridExtra)
+library(lme4)
+library(psych)
+library(xgboost)
+library(data.table)
+library(e1071)
+library(doParallel) # parallel processing
+library(pROC) # plot the ROC curve
+library(randomForest)
+
+```
+
+```{r MICROSOFT's DATAVIZ}
+
+draw_plots <- function(df, xdfTrain){
+    
+    lst = colnames(df)
+    lst_to_remove = c("ID", "class") 
+
+    for(i in lst)
+        {
+        if ( !(i %in% lst_to_remove ) )
+        {
+            txt = paste('rxHistogram(~', i, ", data = xdfTrain)" ,   sep="" )
+            eval(parse(text=txt))
+
+            txt = paste('rxLinePlot(class~', i, ", data = xdfTrain, type='p')" ,   sep="" )
+            eval(parse(text=txt))
+            
+        }
+
+    }
+}
+
+draw_scatter <- function(df, var, xdfTrain){
+    
+    lst = colnames(df)
+    lst_to_remove = c("ID") 
+
+    for(i in lst)
+        {
+        if ( !(i %in% lst_to_remove ) )
+        {
+            txt = paste('rxLinePlot(',var,'~', i, ", groups = class, data = xdfTrain, type='p')" ,   sep="" )
+            eval(parse(text=txt))
+            
+        }
+
+    }
+}
+
+draw_scatter_by_lst <- function(df, lst, xdfTrain){
+    
+    for(i in lst)
+        {
+        for(j in lst)
+        {
+            if( i != j)
+            {
+                
+                }
+            txt = paste('rxLinePlot(',i,'~', j, ", groups = class, data = xdfTrain, type='p')" ,   sep="" )
+            eval(parse(text=txt))
+        }
+    }
+}
+
+
+df <- read.csv('traindata.csv')
+#df = data_capping(df)
+xdfTrain <- "train.xdf"
+rxImport(inData = df,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+
+#rxGetInfo(xdfTrain, getVarInfo = TRUE, numRows = 10)
+#rxSummary(xdfTrain)
+#head(df)
+#table(df$class)
+#draw_plots(df)
+
+#draw_scatter(df, "f23", xdfTrain )
+
+important_features = arrange(var_AUC, desc(AUCs))[1:10,]$lst
+important_features = union(important_features, c("f6") )
+draw_scatter_by_lst(df, important_features, xdfTrain)
+
+
+# INTERESTING GRAPHS
+rxLinePlot(f1~f20, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f3~f3, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f6~f6, groups = class, data = xdfTrain, type='p')
+rxLinePlot(f7~f7, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f19~f7, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f19~f8, groups = class, data = xdfTrain, type='p') 
+
+rxLinePlot(f28~f28, groups = class, data = xdfTrain, type='p')
+rxLinePlot(f15~f28, groups = class, data = xdfTrain, type='p')
+rxLinePlot(f2~f19, groups = class, data = xdfTrain, type='p') 
+
+rxLinePlot(f18~f18, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f15~f26, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f26~f26, groups = class, data = xdfTrain, type='p') 
+
+rxLinePlot(f3~f28, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f31~f31, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f2~f25, groups = class, data = xdfTrain, type='p') 
+rxLinePlot(f4~f3, groups = class, data = xdfTrain, type='p')
+rxLinePlot(f4~f5, groups = class, data = xdfTrain, type='p')
+rxLinePlot(f4~f31, groups = class, data = xdfTrain, type='p') 
+
+
+```
+
+```{r Functions (BEING USED)}
+
+create_interaction <- function(df, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_interaction_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_interaction_", j , "= df$", i, "* df$",j , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_interaction_100 <- function(df, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_interaction100_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_interaction100_", j , "= df$", i, "* df$",j , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_typek_pow <- function(df, lst, min_cor = -1, p = 2)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_typek_pow",p,"_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_typek_pow",p,"_", j , "= df$", i, "^",p," + df$",j, "^",p , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_typek_sub_pow <- function(df, lst, min_cor = -1, p = 2)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_typek_sub_pow",p,"_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_typek_sub_pow",p,"_",  j , "= df$", i, "^",p," - df$",j, "^",p , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_quad_pow <- function(df, lst, min_cor = -1, p = 2)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_quad_pow",p,"_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i,"_quad_pow",p,"_", j , "=  (df$", i, " + df$",j, ")^", p , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_quad_sub_pow <- function(df, lst, min_cor = -1, p = 2)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_quad_sub_pow",p,"_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_quad_sub_pow",p,"_", j , "=  (df$", i, " - df$",j, ")^", p , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+
+
+create_poly_pow <- function(df, lst, min_cor = -1, p = 2)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_poly_pow",p,"_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_poly_pow",p,"_", j , "= (1 + df$", i, " * df$",j, ")^", p , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_poly_sub_pow <- function(df, lst, min_cor = -1, p = 2)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_poly_sub_pow",p,"_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_poly_sub_pow",p,"_", j , "= (1 - df$", i, " * df$",j, ")^", p , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+
+subs_interaction <- function(df, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor & !(paste(j, "_subs_interaction_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_subs_interaction_", j , "= df$", i, "- df$",j , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+
+data_capping <- function(df, lst, level = 0.99)
+    {
+    for(i in lst)
+        {
+        txt = paste('as.numeric(quantile(df$', i, ", probs=c(",level, ")))" ,   sep="" )
+        qnt_threshold = eval(parse(text=txt))
+        
+        txt = paste('df$', i, '[df$', i,  '> ', qnt_threshold , '] = ',qnt_threshold,  sep="" )
+        eval(parse(text=txt))
+        
+        }
+    
+    for(i in lst)
+        {
+        txt = paste('as.numeric(quantile(df$', i, ", probs=c(", 1- level, ")))" ,   sep="" )
+        qnt_threshold = eval(parse(text=txt))
+        
+        txt = paste('df$', i, '[df$', i,  '< ', qnt_threshold , '] = ',qnt_threshold,  sep="" )
+        eval(parse(text=txt))       
+        
+    }
+    return(df)
+}
+
+hundred_transform <- function(df, lst, limit = 1000)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_100 = round(df$", i, "*", limit,",0)" ,  sep="" )
+         eval(parse(text=txt))
+        
+    }
+    return(df)
+}
+
+trunc_transform <- function(df, lst, trunc = 4)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_trunc = round(df$", i,",",trunc,")" ,  sep="" )
+         eval(parse(text=txt))
+        
+    }
+    return(df)
+}
+
+
+hundred_transform_original <- function(df, lst, limit = 1000)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, " = round(df$", i, "*", limit,",0)" ,  sep="" )
+         eval(parse(text=txt))
+        
+    }
+    return(df)
+}
+
+hundred_transform2 <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('temp_median = median(df$', i, ")",  sep="" )
+        eval(parse(text=txt))
+        
+        txt1 = paste('df$', i, "_100m = round(df$", i, "*10000,0)" ,  sep="" )
+        txt2 = paste('df$', i, "_100m = round(df$", i, "*1000,0)" ,  sep="" )
+        
+        ifelse(temp_median < 0.09, eval(parse(text=txt1)), eval(parse(text=txt2)) )
+        
+    }
+    return(df)
+}
+
+
+
+
+run_forest <- function(xdfTrain, xdfTest, test, form)
+    {
+    
+    treeOut <- rxFastTrees(form, type = "binary", 
+                           numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+    
+    predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+    rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+    AUC = rxAuc(rocOut)
+    
+    return(AUC)
+}
+
+
+run_forest_w_parameters <- function(xdfTrain, xdfTest, test, form,  numTrees= 100, numLeaves= 20, learningRate= 0.1, exampleFraction= 0.7, featureFraction= 1, minSplit = 10, splitFraction = 1)
+    {
+    treeOut <- rxFastTrees(form, type = "binary", 
+                           numTrees= numTrees, numLeaves= numLeaves, learningRate= learningRate, exampleFraction= exampleFraction, featureFraction= featureFraction,
+                           minSplit = minSplit, splitFraction = splitFraction, numBins = 255, data = xdfTrain, reportProgress = 0, verbose = 0, trainThreads = 2)
+    
+    predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+    rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+    AUC = rxAuc(rocOut)
+    
+    return(AUC)
+}
+
+
+```
+
+```{r NAIVE BASIC }
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+
+    nvb <- naiveBayes(as.factor(class) ~ ., data = train)
+    test$Probability.1 <- predict(nvb, newdata = X_test)
+    train$Probability.1 <- predict(nvb, newdata = X_train)
+    
+    auc(test$class,as.ordered(test$Probability.1))
+    
+    pred = as.numeric(levels(test$Probability.1)[as.integer(test$Probability.1)])
+    tval = as.numeric(levels(as.factor(test$class))[as.integer(as.factor(test$class))])
+    sqrt(mean((pred - tval)^2)) #rmse
+
+    
+    auc(train$class,as.ordered(train$Probability.1))
+    
+    pred = as.numeric(levels(train$Probability.1)[as.integer(train$Probability.1)])
+    tval = as.numeric(levels(as.factor(train$class))[as.integer(as.factor(train$class))])
+    sqrt(mean((pred - tval)^2)) #rmse
+
+```
+
+```{r LOGISTIC BASIC}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+logmod = glm(as.factor(class) ~ ., family = binomial(link = 'logit'), data = train)
+preds <- predict(logmod, newdata = test)
+pred = (preds > 0)*1
+auc(test$class,pred) #auc
+sqrt(mean((pred - tval)^2)) #rmse
+
+preds <- predict(logmod, newdata = train)
+pred = (preds > 0)*1
+auc(train$class,pred) #auc
+sqrt(mean((pred - tval)^2)) #rmse
+
+```
+
+```{r SVM BASIC}
+
+rmse <- function(error)
+{
+  sqrt(mean(error^2))
+}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+print("RADIAL")
+svm_radial <- svm(class ~ ., data=train, kernel="radial")
+radial_predict <- predict(svm_radial, newdata=test)
+roc(test$class, as.numeric(radial_predict))
+rmse(svm_radial$residuals)
+radial_predict <- predict(svm_radial, newdata=train)
+roc(train$class, as.numeric(radial_predict))
+rmse(svm_radial$residuals)
+
+print("LINEAR")
+svm_linear <- svm(class ~ ., data=train, kernel="linear")
+linear_predict <- predict(svm_linear, newdata=test)
+roc(test$class, as.numeric(linear_predict))
+rmse(svm_linear$residuals)
+linear_predict <- predict(svm_linear, newdata=train)
+roc(train$class, as.numeric(linear_predict))
+rmse(svm_linear$residuals)
+
+print("POLYNOMIAL")
+svm_polynomial <- svm(class ~ ., data=train, kernel="polynomial")
+poly_predict <- predict(svm_polynomial, newdata=test)
+roc(test$class, as.numeric(poly_predict))
+rmse(svm_polynomial$residuals)
+poly_predict <- predict(svm_polynomial, newdata=train)
+roc(train$class, as.numeric(poly_predict))
+rmse(svm_polynomial$residuals)
+
+print("SIGMOID")
+svm_sigmoid <- svm(class ~ ., data=train, kernel="sigmoid")
+sigmoid_predict <-predict(svm_sigmoid, newdata=test)
+roc(test$class, as.numeric(sigmoid_predict))
+rmse(svm_sigmoid$residuals)
+sigmoid_predict <-predict(svm_sigmoid, newdata=train)
+roc(train$class, as.numeric(sigmoid_predict))
+rmse(svm_sigmoid$residuals)
+
+
+```
+
+```{r RANDOM FOREST BASIC}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+rf_model <- randomForest(as.factor(class) ~ ., data=train)
+rf_predict <- predict(rf_model, newdata=test)
+roc(test$class, as.numeric(rf_predict))
+
+
+```
+
+```{r MICROSOFT's FAST TREES BASIC}
+
+df = read.csv('traindata.csv')
+
+set.seed(100000)
+
+split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+xvars <- names(train)
+xvars <- xvars[xvars !='class']
+xvars <- xvars[xvars !='ID']
+form <- paste("class", "~", paste(xvars, collapse = "+"))
+
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+  numTrees= 500, numLeaves= 15, learningRate= 0.01, exampleFraction= 0.8, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 2, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0)
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+    
+AUC = rxAuc(rocOut)
+print(AUC)
+plot(rocOut, main = paste("AUC", AUC))
+
+
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTrain, extraVarsToWrite = names(train), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+    
+AUC = rxAuc(rocOut)
+print(AUC)
+plot(rocOut, main = paste("AUC", AUC))
+
+```
+
+
+XGBOOST RELATED
+
+```{r GBM: XGBOOST FINAL MODEL AUC: AUC 0.8110367}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+PCA = TRUE
+cor_par = 0.2
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+        
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    }
+    
+    
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+    xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      min_child_weight = 2,
+      colsample_bytree =  0.8,
+      subsample = 0.7,
+      eta = 0.007, # eta is the learning rate.
+      nthread = 8, 
+      gamma = 0,
+      alpha = 0.18,
+      lambda = 3,
+      eval_metric = "auc"
+    )
+
+    bst <- xgboost(data = as.matrix(X_train), booster = "gbtree", label = train$class, 
+                   nround = 2105, verbose = FALSE, nfold = 5, params = xgparam)
+    test$Probability.1 <- predict(bst, as.matrix(X_test))
+
+    gbm.ROC <- roc(predictor=test$Probability.1, response=test$class)
+
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    print(AUC)
+    
+    AUCs = rbind(AUCs, AUC)
+    print(AUCs)
+    
+plot(gbm.ROC,main="GBM ROC")
+
+
+##### FEATURES ORDERED BY IMPORTANCE:
+importance_matrix <- xgb.importance(feature_names = colnames(as.matrix(X_train)) ,model = bst)
+xgb.plot.importance(importance_matrix = importance_matrix)
+arrange(importance_matrix, desc(Gain))
+
+DO_CV = FALSE
+if(DO_CV){
+    
+# cross-validate xgboost to get the accurate measure of error
+xgb_cv_1 = xgb.cv(params = xgparam,
+                  data = as.matrix(X_train),
+                  label = train$class,
+                  nrounds = 3050, 
+                  nfold = 5,                                                   
+                  prediction = TRUE,                                           
+                  showsd = TRUE,                                               
+                  stratified = TRUE,                                           
+                  verbose = FALSE,
+                  metrics = list("rmse","auc"),
+                  print.every.n = 1
+)
+
+print(xgb_cv_1, verbose=TRUE)
+write.csv(as.data.frame(xgb_cv_1[4]), file = "cv_values.csv",row.names=FALSE, na="")
+
+}
+
+
+```
+
+```{r GBM: XGBOOST BASIC AUC 78.36 }
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+
+    bst <- xgboost(data = as.matrix(X_train), booster = "gbtree", label = train$class, 
+                   nround = 300, eta = 0.1, verbose = FALSE)
+    test$Probability.1 <- predict(bst, as.matrix(X_test))
+    train$Probability.1 <- predict(bst, as.matrix(X_train))
+    
+    gbm.ROC <- roc(predictor=test$Probability.1, response=test$class)
+
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    print(AUC)
+    
+    AUCs = rbind(AUCs, AUC)
+    print(AUCs)
+    
+plot(gbm.ROC,main="GBM ROC")
+
+gbm.ROC <- roc(predictor=train$Probability.1, response=train$class)
+
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    print(AUC)
+    
+
+##### FEATURES ORDERED BY IMPORTANCE:
+importance_matrix <- xgb.importance(feature_names = colnames(as.matrix(X_train)) ,model = bst)
+xgb.plot.importance(importance_matrix = importance_matrix)
+arrange(importance_matrix, desc(Gain))
+
+
+# cross-validate xgboost to get the accurate measure of error
+xgb_cv_1 = xgb.cv(
+                  data = as.matrix(X_train),
+                  label = train$class,
+                  nrounds = 300, 
+                  nfold = 5,                                                   
+                  prediction = TRUE,                                           
+                  showsd = TRUE,                                               
+                  stratified = TRUE,                                           
+                  verbose = FALSE,
+                  metrics = list("rmse","auc"),
+                  print.every.n = 1)
+
+print(xgb_cv_1, verbose=TRUE)
+                  
+
+```
+
+```{r ENSEMBLE: XGBOOST 1 + XGBOOST 2 + FASTREES}
+
+set.seed(100000)
+PCA = TRUE
+cor_par = 0.2
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+
+## XGBOOST 1 PARAMETERS
+df = read.csv('traindata.csv')
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+        
+df$ID = NULL
+XG1_lst = colnames(select(df,-class))
+
+## XGBOOST 2 PARAMETERS
+df = read.csv('traindata.csv')
+
+df = hundred_transform(df, lst_no_cat, 10000)
+df = data_capping(df, lst_no_cat, level = 0.98) 
+df = create_interaction(df, lst , 0.2)
+df = subs_interaction(df, lst , 0.2)
+df = create_typek_pow(df, lst, 0.2, 2)
+df = create_typek_pow(df, lst, 0.2, 3)
+df = create_quad_pow(df, lst, 0.2, 2)
+df = create_quad_sub_pow(df, lst, 0.2, 2)
+        
+df$ID = NULL
+XG2_lst = colnames(select(df,-class))
+
+### START
+
+df = read.csv('traindata.csv')
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+df = hundred_transform(df, lst_no_cat, 10000)
+df = create_typek_pow(df, lst, 0.2, 2)
+df = create_typek_pow(df, lst, 0.2, 3)
+df = create_quad_pow(df, lst, 0.2, 2)
+df = create_quad_sub_pow(df, lst, 0.2, 2)
+
+
+split = sample.split(df$class, SplitRatio = .7)
+train_level1 = subset(df, split == TRUE)
+test = subset(df, split == FALSE)
+
+split2 = sample.split(train_level1$class, SplitRatio = .6)
+trainA = subset(train_level1, split2 == TRUE)
+trainB = subset(train_level1, split2 == FALSE)
+
+trainA = select(trainA, -ID  )
+trainB = select(trainB, -ID  )
+test = select(test, -ID  )
+
+
+lst_pca = lst
+n_pca = 31
+    
+if(PCA)
+    {
+    prin_comp = prcomp(select(trainA, one_of(lst_pca)), scale. = T)
+
+    train_dataA = cbind(select(trainA, class), prin_comp$x)
+    train_dataA = train_dataA[,0:n_pca + 1]
+    trainA = cbind(train_dataA, select(trainA, -class))
+
+    prin_trainB = predict(prin_comp, newdata = select(trainB, one_of(lst_pca)))
+    train_dataB = cbind(select(trainB, class), prin_trainB)
+    train_dataB = train_dataB[,0:n_pca + 1]
+    trainB = cbind(train_dataB, select(trainB, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    
+    }
+
+    
+    X_trainA = select(trainA, -class )
+    X_trainB = select(trainB, -class )
+    X_test = select(test, -class  )
+ 
+    
+###### XGBOOST 1  ########################################## 
+    xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      min_child_weight = 2,
+      colsample_bytree =  0.8,
+      subsample = 0.7,
+      eta = 0.007, # eta is the learning rate.
+      nthread = 8, 
+      gamma = 0,
+      alpha = 0.18,
+      lambda = 3,
+      eval_metric = "auc"
+    )
+    
+    bstA <- xgboost(data = as.matrix(select(X_trainA, one_of(XG1_lst))), booster = "gbtree", label = trainA$class, 
+                   nround = 2334, verbose = FALSE, nfold = 5, params = xgparam)
+    trainB$Probability.A <- predict(bstA, as.matrix(select(X_trainB, one_of(XG1_lst))))
+    test$Probability.A <- predict(bstA, as.matrix(select(X_test, one_of(XG1_lst))))
+
+
+    gbm.ROC <- roc(predictor=trainB$Probability.A, response=trainB$class)
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    AUCs = rbind(AUCs, AUC)
+    print(paste("AUC XGBoost 1: ",AUCs))
+    importance_matrix <- xgb.importance(feature_names = colnames(as.matrix(X_trainA)) ,model = bstA)
+    
+    gbm.ROC <- roc(predictor=test$Probability.A, response=test$class)
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    AUCs = rbind(AUCs, AUC)
+    print(paste("AUC XGBoost 1 (in test level 2): ",AUCs))
+    
+    train_level2_XG1 = select(trainB, Probability.A)
+    test_level2_XG1 = select(test, Probability.A)
+    
+######################################################
+    
+###### XGBOOST 2  ########################################## 
+    
+xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      min_child_weight = c(2),
+      colsample_bytree =  0.8,
+      subsample = 0.7,
+      eta = 0.007, # eta is the learning rate.
+      nthread = 8, 
+      gamma = 0,
+      alpha = 1,
+      lambda = 1.7,
+      eval_metric = "auc"
+    )
+    
+    bstB <- xgboost(data = as.matrix(select(X_trainA, one_of(XG2_lst))), booster = "gbtree", label = trainA$class, 
+                   nround = 2334, verbose = FALSE, nfold = 5, params = xgparam)
+    trainB$Probability.B <- predict(bstB, as.matrix(select(X_trainB, one_of(XG2_lst))))
+    test$Probability.B <- predict(bstB, as.matrix(select(X_test, one_of(XG2_lst))))
+
+    gbm.ROC <- roc(predictor=trainB$Probability.B, response=trainB$class)
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    AUCs = rbind(AUCs, AUC)
+    print(paste("AUC XGBoost 2: ",AUCs))
+    
+    gbm.ROC <- roc(predictor=test$Probability.B, response=test$class)
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    AUCs = rbind(AUCs, AUC)
+    print(paste("AUC XGBoost 2 (in test level 2): ",AUCs))
+    
+    
+    train_level2_XG2 = select(trainB, Probability.B)
+    test_level2_XG2 = select(test, Probability.B)
+
+######################################################
+    
+
+###### RF  ##########################################
+Do_RF = TRUE
+if (Do_RF)
+{
+
+
+important_features = arrange(as.data.frame(importance_matrix), desc(Gain))$Feature[1:100]
+form = paste("class", "~", paste(important_features, collapse = "+"))
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+  numTrees= 3000, numLeaves= 15, learningRate= 0.01, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = trainA, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = trainB, extraVarsToWrite = names(trainB), reportProgress = 0, verbose = 0 )
+
+predTest <- rxPredict(modelObject = treeOut, data = test, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+AUC = rxAuc(rocOut)
+print(paste("AUC RF: ",AUC))
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTest), value = T), predTest, reportProgress = 0)
+AUC = rxAuc(rocOut)
+print(paste("AUC RF (in test level 2): ",AUC))
+
+train_level2_RF = select(predTree, Probability.1)
+test_level2_RF = select(predTest, Probability.1)
+
+}
+
+######################################################
+
+###### BLENDER  ##########################################
+
+train = cbind(trainB$class, train_level2_XG1$Probability.A)
+train = cbind(train, train_level2_XG2$Probability.B)
+train = as.data.frame(train)
+colnames(train) = c("class","Probability.A", "Probability.B")
+
+test = cbind(test$class, test_level2_XG1$Probability.A)
+test = cbind(test, test_level2_XG2$Probability.B)
+test = as.data.frame(test)
+colnames(test) = c("class","Probability.A", "Probability.B")
+
+
+model = glm(class ~ . ,binomial(link="logit"),data=train)
+test$Probability = predict(model, test, type="response")
+
+
+xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      min_child_weight = 2,
+      colsample_bytree =  0.8,
+      subsample = 0.7,
+      eta = 0.007, # eta is the learning rate.
+      nthread = 8, 
+      gamma = 0,
+      alpha = 0.2,
+      lambda = 3,
+      eval_metric = "auc"
+    )
+    
+#model <- xgboost(data = as.matrix(select(train,-class)), booster = "gbtree", label = train$class,  nround = 2334, verbose = FALSE, nfold = 5, params = xgparam)
+#test$Probability = predict(model, as.matrix(select(test,-class)))
+
+gbm.ROC <- roc(predictor=test$Probability, response=test$class)
+AUC = gbm.ROC$auc
+AUCs = c()
+AUCs = rbind(AUCs, AUC)
+print(paste("AUC Blended: ",AUCs))
+plot(gbm.ROC,main="GBM ROC")
+
+
+
+```
+
+```{r GBM: XGBOOST TOP-N AUC 0.8090194}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+top_n = 200
+PCA = TRUE
+cor_par = 0.2
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    }
+    
+
+    important_features = arrange(as.data.frame(importance_matrix), desc(Gain))$Feature[1:top_n]
+    train_topn = select(train, one_of(important_features))
+    test_topn = select(test, one_of(important_features))
+    X_train = train_topn
+    X_test = test_topn
+
+xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      min_child_weight = 2,
+      colsample_bytree =  0.8,
+      subsample = 0.7,
+      eta = 0.007, # eta is the learning rate.
+      nthread = 8, 
+      gamma = 0,
+      alpha = 0.2,
+      lambda = 3,
+      eval_metric = "auc"
+    )
+        
+
+    bst <- xgboost(data = as.matrix(X_train), booster = "gbtree", label = train$class, 
+                   nround = 2334, verbose = FALSE, nfold = 5, params = xgparam)
+    test$Probability.1 <- predict(bst, as.matrix(X_test))
+
+    gbm.ROC <- roc(predictor=test$Probability.1, response=test$class)
+
+    AUC = gbm.ROC$auc
+    AUCs = c()
+    print(AUC)
+    
+    AUCs = rbind(AUCs, AUC)
+    print(AUCs)
+    
+
+plot(gbm.ROC,main="GBM ROC")
+
+```
+
+```{r GBM: XGBOOST FEATURES GRID SEARCH (inhouse-built)}
+
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+PCA = TRUE
+
+hundred_lst = c(3)#,1,2,3) # 1000, 10000, median, none
+interac_lst = c(1)#, 1) # none,  interactions x*y
+sub_lst = c(1) # none, x-y
+typek_pow2_lst = c(1,0)#,0)
+typek_pow3_lst = c(1,0)#,0)
+typek_sub_pow2_lst = c(1,0)#,0)
+typek_sub_pow3_lst = c(1,0)#,0)
+quad_pow2_lst = c(0)#,1)
+quad_pow3_lst = c(0)#,1)
+quad_sub_pow2_lst = c(1)#),1)
+quad_sub_pow3_lst = c(0)#,1)
+poly_pow2_lst = c(0)
+poly_pow3_lst = c(0)
+poly_sub_pow2_lst = c(0)
+poly_sub_pow3_lst = c(0)
+
+
+AUCs = c("iter","hundred transform", "interaction x*y", "interaction subs", "typek_pow2", "typek_pow3", "typek_sub_pow2", "typek_sub_pow3", "quad_pow2", "quad_pow3", "quad_sub_pow2", "quad_sub_pow3", "poly_pow2", "poly_pow3", "poly_sub_pow2", "poly_sub_pow3", "AUC_score")
+r = 0
+iterations = length(hundred_lst) * length(interac_lst ) * length(sub_lst) * length(typek_pow2_lst) * length(typek_pow3_lst) * length(typek_sub_pow2_lst)* length(typek_sub_pow3_lst) * length(quad_pow2_lst) * length(quad_pow3_lst) * length(quad_sub_pow2_lst) * length(quad_sub_pow3_lst) * length(poly_pow2_lst) * length(poly_pow3_lst) * length(poly_sub_pow2_lst) * length(poly_sub_pow3_lst)
+
+for(i in hundred_lst){
+    if(i == 0){ i_name = "transform NONE"}
+    else if(i == 1){ i_name = "transform2" }
+    else if(i == 2){ i_name = "transform 1000"}
+    else if(i == 3){ i_name = "transform 10000"}
+    
+    for(j in interac_lst){
+    if(j == 0){j_name = "x*y NONE"}
+    else if(j == 1){ j_name = "x*y YES"}
+        
+        for(k in sub_lst){
+        if(k == 0){k_name = "int subs NONE"}
+        else if(k == 1){ k_name = "int subs YES"}
+            
+                for(l in typek_pow2_lst){
+                if(l == 0){l_name = "typek_pow2 NONE"}
+                else if(l == 1){ l_name = "typek_pow2 YES"}
+                    
+                        for(m in typek_pow3_lst){
+                        if(m == 0){m_name = "typek_pow3 NONE"}
+                        else if(m == 1){ m_name = "typek_pow3 YES"}
+                            
+                                for(n in typek_sub_pow2_lst){
+                                if(n == 0){n_name = "typek_sub_pow2 NONE"}
+                                else if(n == 1){ n_name = "typek_sub_pow2 YES"}
+                                    
+                                    for(o in typek_sub_pow3_lst){
+                                    if(o == 0){o_name = "typek_sub_pow3 NONE"}
+                                    else if(o == 1){ o_name = "typek_sub_pow3 YES"}
+                                        
+                                        for(p in quad_pow2_lst){
+                                        if(p == 0){p_name = "quad_pow2 NONE"}
+                                        else if(p == 1){ p_name = "quad_pow2 YES"}
+                                            
+                                            for(q in quad_pow3_lst){
+                                            if(q == 0){q_name = "quad_pow3 NONE"}
+                                            else if(q == 1){ q_name = "quad_pow3 YES"}
+                                                
+                                                for(z in quad_sub_pow2_lst){
+                                                if(z == 0){z_name = "quad_sub_pow2 NONE"}
+                                                else if(z == 1){ z_name = "quad_sub_pow2 YES"}
+                                                    
+                                                    for(y in quad_sub_pow3_lst){
+                                                    if(y == 0){y_name = "quad_sub_pow3 NONE"}
+                                                    else if(y == 1){ y_name = "quad_sub_pow3 YES"}
+                                                        
+                                                        for(x in poly_pow2_lst){
+                                                        if(x == 0){x_name = "poly_pow2 NONE"}
+                                                        else if(x == 1){ x_name = "poly_pow2 YES"}
+                                                            
+                                                            for(w in poly_pow3_lst){
+                                                            if(w == 0){w_name = "poly_pow3 NONE"}
+                                                            else if(w == 1){ w_name = "poly_pow3 YES"}
+                                                                
+                                                                for(v in poly_sub_pow2_lst){
+                                                                if(v == 0){v_name = "poly_sub_pow2 NONE"}
+                                                                else if(v == 1){ v_name = "poly_sub_pow2 YES"}
+                                                                    
+                                                                    for(u in poly_sub_pow3_lst){
+                                                                    if(u == 0){u_name = "poly_sub_pow3 NONE"}
+                                                                    else if(u == 1){ u_name = "poly_sub_pow3 YES"}
+    set.seed(100000)                    
+    df = read.csv('traindata.csv') 
+    
+    if(i_name == "transform2"){df = hundred_transform2(df, lst) }
+    else if(i_name == "transform 1000"){ df = hundred_transform(df, lst_no_cat, 1000) }
+    else if(i_name == "transform 10000"){ df = hundred_transform(df, lst_no_cat, 10000)}
+    
+    df = data_capping(df, lst_no_cat, level = 0.98) 
+    
+    if(j_name == "x*y YES"){df = create_interaction(df, lst , 0.2)}
+    if(k_name == "int subs YES"){df = subs_interaction(df, lst , 0.2)}
+    if(l_name == "typek_pow2 YES"){df = create_typek_pow(df, lst, 0.2, 2)}
+    if(m_name == "typek_pow3 YES"){df = create_typek_pow(df, lst, 0.2, 3)}
+    if(n_name == "typek_sub_pow2 YES"){df = create_typek_sub_pow(df, lst, 0.2, 2)}
+    if(o_name == "typek_sub_pow3 YES"){df = create_typek_sub_pow(df, lst, 0.2, 3)}
+    if(p_name == "quad_pow2 YES"){df = create_quad_pow(df, lst, 0.2, 2)}
+    if(q_name == "quad_pow3 YES"){df = create_quad_pow(df, lst, 0.2, 3)}
+    if(z_name == "quad_sub_pow2 YES"){df = create_quad_sub_pow(df, lst, 0.2, 2)}
+    if(y_name == "quad_sub_pow3 YES"){df = create_quad_sub_pow(df, lst, 0.2, 3)}
+    if(x_name == "poly_pow2 YES"){df = create_poly_pow(df, lst, 0.2, 2)}
+    if(w_name == "poly_pow3 YES"){df = create_poly_pow(df, lst, 0.2, 3)}
+    if(v_name == "poly_sub_pow2 YES"){df = create_poly_sub_pow(df, lst, 0.2, 2)}
+    if(u_name == "poly_sub_pow3 YES"){df = create_poly_sub_pow(df, lst, 0.2, 3)}
+
+    
+    split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    
+    }
+    
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+    
+    xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      eta = 0.01, # eta is the learning rate.
+      nthread = 8, 
+      eval_metric = "auc"
+    )
+
+    bst <- xgboost(data = as.matrix(X_train), booster = "gbtree", label = train$class, 
+                   nround = 3000, verbose = FALSE, nfold = 5, params = xgparam)
+    test$Probability.1 <- predict(bst, as.matrix(X_test))
+    pred = test
+    
+    gbm.ROC <- roc(predictor=pred$Probability.1, response=test$class)
+
+    AUC = gbm.ROC$auc
+    print(AUC)
+
+    r = r + 1
+    AUCs = rbind(AUCs, c(r,i_name, j_name, k_name, l_name, m_name, n_name, o_name, p_name, q_name, z_name, y_name, x_name, w_name, v_name, u_name,  AUC))
+    
+    print(paste("Progress: ", round(r / iterations,2)*100 , "% done:", r))   
+    print(AUCs)
+    
+
+}}}}}}}}}}}}}}}
+
+colnames(AUCs) = c("iter","hundred transform", "interaction x*y", "interaction subs","typek", "quad", "poly", "AUC_score")
+AUCs = AUCs[-1, ]
+AUCs = data.frame(AUCs)
+arrange(AUCs, desc(AUC_score))
+
+write.csv(as.data.frame(arrange(AUCs, desc(AUC_score))), file = "gridfunc.csv",row.names=FALSE, na="")
+
+```
+  
+```{r GBM: XGBOOST PARAMETERS GRID SEARCH (inhouse-built)}
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+PCA = TRUE
+
+nround_lst = c(2334)
+eta_lst = c(0.007)
+depth_lst = c(8)#,0.7,0.9) 
+min_child_lst = c(2)#,1,0)
+colsamptree_lst = c(0.8)#,0.75)
+gamma_lst = c(0,0.2,0.4,0.6,0.8,0.9)#,0)
+alpha_lst = c(0,0.2,0.6,0.8,1)#,0)
+lambda_lst = c(3)
+cor_lst = c(0.2)
+
+PARAMSs = c("iter","nround", "eta", "depth", "min_child", "sample_tree", "gamma", "alpha", "lambda","cor_par", "AUC_score")
+r = 0
+iterations = length(nround_lst) * length(eta_lst ) * length(depth_lst) * length(min_child_lst) * length(colsamptree_lst) * length(gamma_lst)* length(alpha_lst) * length(lambda_lst)* length(cor_lst)
+
+for(i in nround_lst){
+    nround_i = i
+    
+    for(j in eta_lst){
+        eta_j = j
+        
+        for(k in depth_lst){
+        depth_k = k
+            
+                for(l in min_child_lst){
+                min_child_l = l
+                    
+                        for(m in colsamptree_lst){
+                        col_sample_tree_m = m
+                            
+                                for(n in gamma_lst){
+                                    gamma_n = n
+                                    
+                                    for(o in alpha_lst){
+                                        alpha_o = o
+                                        
+                                        for(p in lambda_lst){
+                                            lambda_p = p
+                                            
+                                          for(q in cor_lst){
+                                              cor_par = q
+                                            
+        set.seed(100000)
+        df = read.csv('traindata.csv')
+        
+        PCA = TRUE
+        
+        lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+        
+        lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+        
+        df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+        
+        
+         split = sample.split(df$class, SplitRatio = .7)
+            train = subset(df, split == TRUE)
+            test= subset(df, split == FALSE)
+            
+            train = select(train, -ID  )
+            test = select(test, -ID  )
+            
+            ### PCA ###
+            lst_pca = lst
+            n_pca = 31
+            
+            if(PCA)
+            {
+            prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+            
+            train_data = cbind(select(train, class), prin_comp$x)
+            train_data = train_data[,0:n_pca + 1]
+            train = cbind(train_data, select(train, -class))
+            
+            prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+            test_data = cbind(select(test, class), prin_test)
+            test_data = test_data[,0:n_pca + 1]
+            test = cbind(test_data, select(test, -class))
+            }
+            
+            
+            X_train = select(train, -class )
+            X_test = select(test, -class  )
+            
+    xgparam = list(
+      objective = "binary:logistic",
+      max.depth = depth_k, 
+      min_child_weight = min_child_l,
+      colsample_bytree =  col_sample_tree_m,
+      subsample = 0.7,
+      eta = eta_j, # eta is the learning rate.
+      nthread = 8, 
+      gamma = gamma_n,
+      alpha = alpha_o,
+      lambda = lambda_p,
+      eval_metric = "auc"
+    )
+
+    bst <- xgboost(data = as.matrix(X_train), booster = "gbtree", label = train$class, 
+                   nround = nround_i, verbose = FALSE, nfold = 5, params = xgparam)
+    test$Probability.1 <- predict(bst, as.matrix(X_test))
+    pred = test
+    
+    gbm.ROC <- roc(predictor=pred$Probability.1, response=test$class)
+
+    AUC = gbm.ROC$auc
+    print(AUC)
+
+    r = r + 1
+    PARAMSs = rbind(PARAMSs, c(r, i, j, k ,l ,m ,n , o, p, q,  AUC))
+    
+    print(paste("Progress: ", round(r / iterations,2)*100 , "% done:", r))   
+    print(PARAMSs)
+    
+}}}}}}}}}
+
+colnames(PARAMSs) = c("iter","nround", "eta", "depth", "min_child", "sample_tree", "gamma", "alpha", "lambda","cor_par", "AUC_score")
+PARAMSs = PARAMSs[-1, ]
+PARAMSs = data.frame(PARAMSs)
+arrange(PARAMSs, desc(AUC_score))
+
+write.csv(as.data.frame(arrange(PARAMSs, desc(AUC_score))), file = "gridpar.csv",row.names=FALSE, na="")
+
+```
+
+```{r GBM: XGBOOST PARAMETERS GRID SEARCH (Caret)}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+PCA = TRUE
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+df = data_capping(df, lst_no_cat, level = 0.98) 
+df = create_interaction(df, lst , 0.2)
+df = subs_interaction(df, lst , 0.2)
+df = create_quad_pow(df, lst, 0.2, 3)
+df = create_quad_sub_pow(df, lst, 0.2, 2)
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    }
+    
+    X_train = select(train, -class )
+    X_test = select(test, -class  )
+
+# set up the cross-validated hyper-parameter search
+xgb_grid_1 = expand.grid(
+nrounds = c(2440,2480,2550),
+eta = c(0.007),
+max_depth = c(8),
+gamma = 1,
+colsample_bytree = c(1),
+min_child_weight = c(1),
+subsample = c(0.8)
+)
+ 
+# pack the training control parameters
+xgb_trcontrol_1 = trainControl(
+method = "cv",
+number = 3,
+verboseIter = TRUE,
+returnData = FALSE,
+returnResamp = "all",                                                        
+classProbs = TRUE,                                              
+summaryFunction = twoClassSummary,
+allowParallel = TRUE
+)
+ levels = c(1,0)
+# train the model for each parameter combination in the grid,
+xgb_train_1 = train(
+x = as.matrix(X_train),
+y = factor(train$class, labels=make.names(levels)),
+trControl = xgb_trcontrol_1,
+tuneGrid = xgb_grid_1,
+metric = "ROC",
+method = "xgbTree"
+)
+
+xgb_train_1$results
+which(xgb_train_1$results$ROC == max(xgb_train_1$results$ROC))
+max(xgb_train_1$results$ROC)
+
+```
+
+```{r FEATURES SELECTION: GA, SA and RE (Caret): Didn't work, need computing power}
+
+df = read.csv('traindata.csv')
+
+######## Add All Possible variables
+    
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+##### CLEAN-UP
+df = hundred_transform2(df, lst)
+df = data_capping(df, lst_no_cat, level = 0.98)
+
+##### FEATURE ENGINEERING
+
+df = create_interactions(df, lst , 0.2)
+#df = plus_interactions(df, lst_no_cat , 0.2)
+df = subs_interactions(df, lst , 0.2)
+
+set.seed(30500)
+  
+
+split = sample.split(df$class, SplitRatio = .7)
+train = subset(df, split == TRUE)
+test= subset(df, split == FALSE)
+
+train = select(train, -ID  )
+test = select(test, -ID  )
+
+### PCA ###
+PCA = TRUE
+lst_pca = lst
+n_pca = 31
+
+if(PCA)
+{
+prin_comp <- prcomp(select(train, one_of(lst_pca)), scale. = T)
+
+train_data <- cbind(select(train, class), prin_comp$x)
+train_data = train_data[,0:n_pca + 1]
+train <- cbind(train_data, select(train, -class))
+
+prin_test <- predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+test_data <- cbind(select(test, class), prin_test)
+test_data = test_data[,0:n_pca + 1]
+test <- cbind(test_data, select(test, -class))
+
+}
+
+trainX <-select(train, -class)
+testX <- select(test,-class )
+y = train$class
+
+############ GENETIC ALGORITHM (GA) SELECTION
+GA = FALSE
+if(GA)
+    {
+registerDoParallel(4) # Registrer a parallel backend for train
+getDoParWorkers() # check that there are 4 workers
+
+ga_ctrl <- gafsControl(functions = rfGA, # Assess fitness with RF
+                       method = "cv",    # 10 fold cross validation
+                       genParallel=TRUE, # Use parallel programming
+                       allowParallel = TRUE)
+## 
+lev <- c("PS","WS")     # Set the levels
+ 
+system.time(rf_ga3 <- gafs(x = trainX, y = y,
+                           ntree = 100,
+                        importance = TRUE,
+                           iters = 5, # 100 generations of algorithm
+                           popSize = 20, # population size for each generation
+                           levels = lev,
+                           metric = "auc",
+                           gafsControl = ga_ctrl))
+
+
+rf_ga3
+ 
+plot(rf_ga3) # Plot mean fitness (AUC) by generation
+
+final <- rf_ga3$ga$final # Get features selected by GA
+final
+
+}
+
+############ SIMULATED ANNEALING (SA)
+SA = FALSE
+if(SA)
+    {
+sa_ctrl <- safsControl(functions = rfSA,
+                       method = "repeatedcv",
+                       repeats = 1,
+                       improve = 10)
+
+set.seed(10)
+rf_sa <- safs(x = trainX, y = y,
+              iters = 1,
+              safsControl = sa_ctrl)
+rf_sa
+
+plot(rf_sa) + theme_bw()
+
+}
+
+######## RECURSIVE FEATURE ELIMINATION
+RC = TRUE
+if(RC)
+    {
+    
+ctrl$functions <- rfRFE
+ctrl$returnResamp <- "all"
+set.seed(10)
+rfProfile <- rfe(trainX, y, sizes = subsets, rfeControl = ctrl)
+rfProfile
+
+trellis.par.set(caretTheme())
+plot1 <- plot(rfProfile, type = c("g", "o"))
+plot2 <- plot(rfProfile, type = c("g", "o"), metric = "auc")
+print(plot1, split=c(1,1,1,2), more=TRUE)
+print(plot2, split=c(1,2,1,2))
+
+plot1 <- xyplot(rfProfile, 
+                type = c("g", "p", "smooth"), 
+                ylab = "CV Estimates")
+plot2 <- densityplot(rfProfile, 
+                     subset = Variables < 5, 
+                     adjust = 1.25, 
+                     as.table = TRUE, 
+                     xlab = "CV Estimates", 
+                     pch = "|")
+print(plot1, split=c(1,1,1,2), more=TRUE)
+print(plot2, split=c(1,2,1,2))
+
+}
+
+```
+
+```{r GBM: XGBOOST KAGGLE SUBMISSION}
+
+# LOAD
+df1 <- read.csv('traindata.csv')
+df1$set = 'Train'
+df2 <- read.csv('testdata_nolabels.csv')
+df2$set = 'Test'
+df2$class = as.integer(0)
+df = rbind(df1, df2)
+    
+PCA = TRUE
+cor_par = 0.2
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+
+########
+train = filter(df, df$set == "Train")
+train$set = NULL
+test= filter(df, df$set == "Test")
+test$set = NULL
+
+train = select(train, -ID  )
+test_ids = select(test, ID)
+test = select(test, -ID  )
+
+### PCA ###
+lst_pca = lst
+n_pca = 31
+
+if(PCA)
+{
+prin_comp <- prcomp(select(train, one_of(lst_pca)), scale. = T)
+
+train_data <- cbind(select(train, class), prin_comp$x)
+train_data = train_data[,0:n_pca + 1]
+train <- cbind(train_data, select(train, -class))
+
+prin_test <- predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+test_data <- cbind(select(test, class), prin_test)
+test_data = test_data[,0:n_pca + 1]
+test <- cbind(test_data, select(test, -class))
+
+}
+
+####### MODEL
+
+X_train = select(train, -class )
+X_test = select(test, -class  )
+
+    xgparam = list(
+      objective = "binary:logistic",
+      max.depth = 8, 
+      min_child_weight = 2,
+      colsample_bytree =  0.8,
+      subsample = 0.7,
+      eta = 0.007, # eta is the learning rate.
+      nthread = 8, 
+      gamma = 0,
+      alpha = 0.18,
+      lambda = 3,
+      eval_metric = "auc"
+    )
+    
+bst <- xgboost(data = as.matrix(X_train), booster = "gbtree", label = train$class, 
+               nround = 2105, verbose = FALSE, nfold = 5, params = xgparam)
+test$Probability.1 <- predict(bst, as.matrix(X_test))
+pred <- test
+
+pred_out = cbind(test_ids, select(pred, -class))
+
+# OUTPUT CSV3
+pred_csv <- subset(pred_out, select=c("ID","Probability.1"))
+colnames(pred_csv) <- c("ID", "Score")
+
+write.csv(pred_csv, file = "output.csv",row.names=FALSE, na="")
+
+```
+
+
+
+MICROSOFT RELATED
+
+```{r MICROSOFT's FAST TREES}
+
+df = read.csv('traindata.csv')
+
+######## Add All Possible variables
+PCA = TRUE
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+
+# BOX-COX TRANSFORM?
+B_C = FALSE
+if(B_C){
+    
+df_temp = select(df, c(ID, class))
+df = select(df, -c(ID, class))
+preProcValues <- preProcess(df, method = "BoxCox")
+BC <- predict(preProcValues, df)
+df = cbind(df_temp, BC)
+}
+
+# REMOVE LINEAR COMBINATIONS? 
+LC_RM = FALSE
+if(LC_RM){
+comboInfo <- findLinearCombos(df)
+df = df[, -comboInfo$remove]
+}
+
+create_model = function(df, lst, n_seed)
+{
+    set.seed(n_seed)
+    ########SPLIT
+
+split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    
+    }
+
+#######
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+####### MODEL
+
+xvars <- names(train)
+xvars <- xvars[xvars !='class']
+xvars <- xvars[xvars !='ID']
+form <- paste("class", "~", paste(xvars, collapse = "+"))
+
+#important_features = arrange(as.data.frame(importance_matrix), desc(Gain))$Feature[1:100]
+#form = paste("class", "~", paste(important_features, collapse = "+"))
+#print(form)
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+  numTrees= 4000, numLeaves= 15, learningRate= 0.007, exampleFraction= 0.8, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+    
+    return(rocOut)
+}
+
+
+rocOut = create_model(df, lst, 100000)
+AUC = rxAuc(rocOut)
+print(AUC)
+plot(rocOut, main = paste("AUC", AUC))
+
+
+```
+
+
+
+```{r MICROSOFT'S FAST TREES: WITH TOPN}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+top_n = 200
+PCA = TRUE
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    
+    }
+
+#######
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+
+important_features = arrange(as.data.frame(importance_matrix), desc(Gain))$Feature[1:top_n]
+form = paste("class", "~", paste(important_features, collapse = "+"))
+
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+  numTrees= 3000, numLeaves= 15, learningRate= 0.01, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+    
+AUC = rxAuc(rocOut)
+print(AUC)
+plot(rocOut, main = paste("AUC", AUC))
+
+```
+
+```{r MICROSOFT's FAST TREES (Feature Selection: Backward & Forward)}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+######## Add All Possible variables
+PCA = TRUE
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform(df, lst_no_cat, 10000)
+df = data_capping(df, lst_no_cat, level = 0.98) 
+df = create_interaction(df, lst , 0.2)
+df = subs_interaction(df, lst , 0.2)
+df = create_quad_sub_pow(df, lst, 0.2, 2)
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    
+    }
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+
+##### USING SORTED BY GAIN RATIO
+important_features = arrange(as.data.frame(importance_matrix), desc(Gain))$Feature
+########
+
+first_var = important_features[1]
+form = paste("class", "~", paste(first_var, collapse = "+"))
+AUC = run_forest(xdfTrain, xdfTest, test, as.formula(form))
+j = 0
+
+ for(i in important_features)
+        {
+     temp_form = paste(form, "+",  i)
+     temp_AUC = run_forest(xdfTrain, xdfTest, test, as.formula(temp_form))
+     
+     if(temp_AUC > AUC){
+         form = temp_form
+         AUC = temp_AUC
+     }
+     
+     j = j + 1
+    print(paste("Progress: ", round(j /length(important_features),2)*100 , "% done:", i))
+ }
+
+print(paste("Final FORWARD Formula is: ", form))
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+  numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+AUC = rxAuc(rocOut)
+plot(rocOut, main = paste("AUC FORWARD: ", AUC))
+
+form_forward = form
+
+
+
+#### BACKWARD
+allvars = important_features
+form = paste("class", "~", paste(allvars, collapse = "+"))
+
+AUC = run_forest(xdfTrain, xdfTest, test, as.formula(form))
+j = 0
+
+ for(i in important_features)
+        {
+     temp_form = paste(form, "-",  i)
+     temp_AUC = run_forest(xdfTrain, xdfTest, test, as.formula(temp_form))
+     
+     if(temp_AUC > AUC){
+         form = temp_form
+         AUC = temp_AUC
+     }
+     
+     j = j + 1
+    print(paste("Progress: ", round(j /length(important_features),2)*100 , "% done:", i))
+ }
+
+print(paste("Final BACKWARD Formula is: ", form))
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+ numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+AUC = rxAuc(rocOut)
+plot(rocOut, main = paste("AUC BACKWARD", AUC))
+
+form_backward = form
+
+```
+
+```{r MICROSOFT's ENSEMBLE}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+######## Add All Possible variables
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = create_interactions(df, lst, 0.2)
+#df = create_interactions3(df, lst, 0.2)
+#df = create_interactions_poly(df, lst, 0.2)
+#df = poly_transform2(df, lst)
+#df = poly_transform3(df, lst)
+#df = exp_transform(df, lst)
+#df = sin_transform(df, lst)
+#df = cos_transform(df, lst)
+#df = sqrt_transform(df, lst)
+#df = quartile_transform(df, lst)
+#df = binary_transform(df, lst)
+df = data_capping(df, lst)
+#df = new_features(df, lst)
+
+########
+
+split = sample.split(df$class, SplitRatio = .7)
+train = subset(df, split == TRUE)
+test= subset(df, split == FALSE)
+
+train = select(train, -ID  )
+test = select(test, -ID  )
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+split = sample.split(train$class, SplitRatio = .5)
+train1 = subset(train, split == TRUE)
+train2 = subset(train, split == TRUE)
+
+xdfTrain1 <- "train1.xdf"
+rxImport(inData = train1,
+         outFile = xdfTrain1,
+         overwrite=TRUE)
+
+xdfTrain2 <- "train2.xdf"
+rxImport(inData = train2,
+         outFile = xdfTrain2,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+xvars <- names(train1)
+xvars <- xvars[xvars !='class']
+xvars <- xvars[xvars !='ID']
+form <- paste("class", "~", paste(xvars, collapse = "+"))
+
+ensemble <- rxEnsemble(
+     formula = form,
+     data = list(xdfTrain, xdfTrain, xdfTrain, xdfTrain1, xdfTrain2),
+     type = "binary",
+     combineMethod = "median",
+     trainers = list(
+                     fastTrees(numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, trainThreads = 2),
+                     fastTrees(numTrees= 100, numLeaves= 20, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, trainThreads = 2),
+   fastTrees(numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 1,
+   numBins = 255, trainThreads = 2),
+   fastTrees(numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, trainThreads = 2),
+   fastTrees(numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, trainThreads = 2)
+                     
+                     ),
+     reportProgress = 0, replace = TRUE # Indicates using a bootstrap sample for each trainer
+     )
+
+predTree <- rxPredict(modelObject = ensemble, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+AUC = rxAuc(rocOut)
+plot(rocOut, main = paste("AUC", AUC))
+
+
+```
+
+```{r MICROSOFT'S FASTREES: MAIN FEATURES BY THEIR AUCs}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+######## Add All Possible variables
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+########
+
+split = sample.split(df$class, SplitRatio = .7)
+train = subset(df, split == TRUE)
+test= subset(df, split == FALSE)
+train = select(train, -ID  )
+test = select(test, -ID  )
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+lst = colnames(train)
+
+AUCs = c()
+j = 0
+
+    for(i in lst)
+        {
+form <- as.formula(paste("class", "~", i))
+
+treeOut <- rxFastTrees(form , type = "binary",
+        numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+        predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test),reportProgress = 0, verbose = 0 )
+
+rocOut <- rxRoc("class", grep("Probability.", names(predTree), value = T), predTree, reportProgress = 0)
+AUC = rxAuc(rocOut)
+AUCs = c(AUCs, AUC)
+j = j + 1
+print(paste("Progress: ", round(j / ncol(train),2)*100 , "% done:", i))
+    }
+
+var_AUC = data.frame(lst, AUCs)
+arrange(var_AUC, desc(AUCs))
+#arrange(var_AUC, desc(AUCs))$lst
+
+summary_AUC = arrange(as.data.frame(output)[-1,], desc(V8))
+names(summary_AUC) = c("numTrees","numLeaves","learningRate","exampleFraction","featureFraction","minSplit","splitFraction", "AUC")
+summary_AUC
+
+
+```
+
+```{r MICROSOFT'S NEURAL NETWORK}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+PCA = TRUE
+cor_par = 0.2
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform2(df, lst)
+        df = data_capping(df, lst_no_cat, level = 0.98) 
+        df = create_interaction(df, lst , cor_par)
+        df = subs_interaction(df, lst , cor_par)
+        df = create_quad_pow(df, lst, cor_par, 3)
+        df = create_quad_sub_pow(df, lst, cor_par, 2)
+        
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    }
+    
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+xvars <- names(train)
+xvars <- xvars[xvars !='class']
+xvars <- xvars[xvars !='ID']
+form <- paste("class", "~", paste(xvars, collapse = "+"))
+
+# MODEL
+treeOut <-   rxNeuralNet(as.formula(form), data = xdfTrain, type = "binary",numHiddenNodes = 100, numIterations = 10000, acceleration = c("sse", "gpu"), miniBatchSize = 1, reportProgress = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test) )
+
+rocOut <- rxRoc("class", grep("Probability", names(predTree), value = T), predTree)
+AUC = rxAuc(rocOut)
+plot(rocOut, main = paste("AUC", AUC))
+
+```
+
+```{r MICROSOFT'S LOGIT FEATURE SELECTION}
+
+set.seed(100000)
+df = read.csv('traindata.csv')
+
+######## Add All Possible variables
+PCA = TRUE
+
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+df = hundred_transform(df, lst_no_cat, 10000)
+df = data_capping(df, lst_no_cat, level = 0.98) 
+df = create_interaction(df, lst , 0.2)
+df = subs_interaction(df, lst , 0.2)
+df = create_quad_sub_pow(df, lst, 0.2, 2)
+
+ split = sample.split(df$class, SplitRatio = .7)
+    train = subset(df, split == TRUE)
+    test= subset(df, split == FALSE)
+    
+    train = select(train, -ID  )
+    test = select(test, -ID  )
+    
+    ### PCA ###
+    lst_pca = lst
+    n_pca = 31
+    
+    if(PCA)
+    {
+    prin_comp = prcomp(select(train, one_of(lst_pca)), scale. = T)
+    
+    train_data = cbind(select(train, class), prin_comp$x)
+    train_data = train_data[,0:n_pca + 1]
+    train = cbind(train_data, select(train, -class))
+    
+    prin_test = predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+    test_data = cbind(select(test, class), prin_test)
+    test_data = test_data[,0:n_pca + 1]
+    test = cbind(test_data, select(test, -class))
+    
+    }
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+
+fit <-  rxLogit(class ~ f1, data = xdfTrain,
+                variableSelection = rxStepControl(method="stepwise", scope = ~ f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9 + f10 +
+f11 + f12 + f13 + f14 + f15 + f16 + f17 + f18 + f19 + f21 + 
+f21 + f22 + f23 + f24 + f25 + f26 + f27 + f28 + f29 + f30 + f31), reportProgress = 0)
+summary(fit)
+
+
+```
+
+```{r MICROSOFT's: KAGGLE SUBMISSION}
+
+# LOAD
+df1 <- read.csv('traindata.csv')
+df1$set = 'Train'
+df2 <- read.csv('testdata_nolabels.csv')
+df2$set = 'Test'
+df2$class = as.integer(0)
+df = rbind(df1, df2)
+    
+lst = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31")
+
+lst_no_cat = c("f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f12","f13","f14","f16","f17","f18","f20","f21","f22","f24","f25","f26","f27","f28","f29","f30","f31")
+
+##### CLEAN-UP
+df = hundred_transform2(df, lst)
+df = data_capping(df, lst_no_cat, level = 0.98)
+
+##### FEATURE ENGINEERING
+df = create_interactions(df, lst , 0.2)
+df = subs_interactions(df, lst , 0.2)
+
+
+########
+train = filter(df, df$set == "Train")
+train$set = NULL
+test= filter(df, df$set == "Test")
+test$set = NULL
+
+train = select(train, -ID  )
+test_ids = select(test, ID)
+test = select(test, -ID  )
+
+### PCA ###
+PCA = TRUE
+lst_pca = lst
+n_pca = 31
+
+if(PCA)
+{
+prin_comp <- prcomp(select(train, one_of(lst_pca)), scale. = T)
+
+train_data <- cbind(select(train, class), prin_comp$x)
+train_data = train_data[,0:n_pca + 1]
+train <- cbind(train_data, select(train, -class))
+
+prin_test <- predict(prin_comp, newdata = select(test, one_of(lst_pca)))
+test_data <- cbind(select(test, class), prin_test)
+test_data = test_data[,0:n_pca + 1]
+test <- cbind(test_data, select(test, -class))
+
+}
+
+####### XDF FILES
+
+xdfTrain <- "train.xdf"
+rxImport(inData = train,
+         outFile = xdfTrain,
+         overwrite=TRUE)
+
+xdfTest <- "test.xdf"
+rxImport(inData = test,
+         outFile = xdfTest,
+         overwrite=TRUE)
+
+####### MODEL
+
+xvars <- names(train)
+xvars <- xvars[xvars !='class']
+xvars <- xvars[xvars !='ID']
+form <- paste("class", "~", paste(xvars, collapse = "+"))
+
+treeOut <- rxFastTrees(as.formula(form), type = "binary",
+  numTrees= 100, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = xdfTrain, trainThreads = 2, reportProgress = 0, verbose = 0)
+
+predTree <- rxPredict(modelObject = treeOut, data = xdfTest, extraVarsToWrite = names(test), reportProgress = 0, verbose = 0 )
+
+predTree_out = cbind(test_ids, select(predTree, -class))
+
+# OUTPUT CSV
+pred_csv <- subset(predTree_out, select=c("ID","Probability.1"))
+colnames(pred_csv) <- c("ID", "Score")
+
+write.csv(pred_csv, file = "irecasens.csv",row.names=FALSE, na="")
+
+```
+
+
+CODE THAT WASN'T USED IN THE END: 
+
+```{r Functions (NOT BEING USED)}
+
+
+create_lm_interactions <- function(df, train, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_lm_interaction_", i, sep="") %in% colnames(df)) )
+                        {
+                
+                            txt = paste('model = rxLinMod(formula = class ~ ', i, "+", j , ", data = train)", sep="" )
+                            
+                            eval(parse(text=txt))
+                
+                            txt = paste('df$', i, "_lm_interaction_", j , "= model$coefficients[1] + model$coefficients[2]*df$", i, "+ model$coefficients[3] *df$",j , sep="" )
+                            
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+create_lm_interactions2 <- function(df, train, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_lm2_interaction_", i, sep="") %in% colnames(df)) )
+                        {
+                
+                            txt = paste('model = rxLinMod(formula = class ~ ', i, "+", j , " + ", i, "*", j, ", data = train)", sep="" )
+                            
+                            eval(parse(text=txt))
+                
+                            txt = paste('df$', i, "_lm2_interaction_", j , "= model$coefficients[1] + model$coefficients[2]*df$", i, "+ model$coefficients[3] *df$",j , "+ model$coefficients[4] * df$",i, "*df$",j, sep="" )
+                            
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+
+
+create_forest_interactions <- function(df, train, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_forest_interaction_", i, sep="") %in% colnames(df)) )
+                        {
+                
+                temp_train = cbind(select(train, class), select(train, one_of(lst)))
+                txt = paste('temp_form = class ~ ',i,'+',j, sep="" )
+                eval(parse(text=txt))
+                temp_df = cbind(select(df, class), select(df, one_of(lst)))
+                
+                temp_treeOut <- rxFastTrees(as.formula(temp_form), type = "binary",
+  numTrees= 10, numLeaves= 15, learningRate= 0.1, exampleFraction= 1, featureFraction= 1, minSplit = 10, splitFraction = 0.8,
+   numBins = 255, data = temp_train, trainThreads = 2, reportProgress = 0, verbose = 0)
+                
+                temp_predTree <- rxPredict(modelObject = temp_treeOut, data = temp_df, extraVarsToWrite = names(temp_df), reportProgress = 0, verbose = 0 )
+                
+                txt = paste('df$', i, "_forest_interaction_", j , "= temp_predTree$Probability.1" , sep="" )
+                eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+
+
+plus_interactions <- function(df, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor  & !(paste(j, "_plus_interaction_", i, sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_plus_interaction_", j , "= df$", i, "+ df$",j , sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+
+
+
+create_interactions3 <- function(df, lst, min_cor = -1)
+    {
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            for(w in lst)
+            {
+                txt1 = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+                txt2 = paste('abs(cor(df$', i, ",df$", w , "))", sep="" )
+                txt3 = paste('abs(cor(df$', w, ",df$", j , "))", sep="" )
+                
+                if (i != j & i != w & j != w  
+                    & !(paste(i, "_interaction_", j, "_interaction_", w,  sep="") %in% colnames(df)) 
+                    & !(paste(i, "_interaction_", w, "_interaction_", j,  sep="") %in% colnames(df)) 
+                    & !(paste(j, "_interaction_", i, "_interaction_", w,  sep="") %in% colnames(df))
+                    & !(paste(j, "_interaction_", w, "_interaction_", i,  sep="") %in% colnames(df)) 
+                    & !(paste(w, "_interaction_", i, "_interaction_", j,  sep="") %in% colnames(df)) 
+                    & !(paste(w, "_interaction_", j, "_interaction_", i,  sep="") %in% colnames(df)) 
+                    & eval(parse(text=txt1)) > min_cor 
+                    & eval(parse(text=txt2)) > min_cor 
+                    & eval(parse(text=txt3)) > min_cor 
+                    )
+                        {
+                            txt = paste('df$', i, "_interaction_", j, "_interaction_", w , "= df$", i, "* df$",j, "* df$",w , sep="" )
+                            eval(parse(text=txt))
+                        }
+            }
+        }
+    }
+    return(df)
+}
+
+create_lm_interactions3 <- function(df, train, lst, min_cor = -1)
+    {
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            for(w in lst)
+            {
+                txt1 = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+                txt2 = paste('abs(cor(df$', i, ",df$", w , "))", sep="" )
+                txt3 = paste('abs(cor(df$', w, ",df$", j , "))", sep="" )
+                
+                if (i != j & i != w & j != w  
+                    & !(paste(i, "_lm_interaction_", j, "_interaction_", w,  sep="") %in% colnames(df)) 
+                    & !(paste(i, "_lm_interaction_", w, "_interaction_", j,  sep="") %in% colnames(df)) 
+                    & !(paste(j, "_lm_interaction_", i, "_interaction_", w,  sep="") %in% colnames(df))
+                    & !(paste(j, "_lm_interaction_", w, "_interaction_", i,  sep="") %in% colnames(df)) 
+                    & !(paste(w, "_lm_interaction_", i, "_interaction_", j,  sep="") %in% colnames(df)) 
+                    & !(paste(w, "_lm_interaction_", j, "_interaction_", i,  sep="") %in% colnames(df)) 
+                    & eval(parse(text=txt1)) > min_cor 
+                    & eval(parse(text=txt2)) > min_cor 
+                    & eval(parse(text=txt3)) > min_cor 
+                    )
+                        {
+                            txt = paste('model = rxLinMod(formula = class ~ ', i, "+", j , "+", w, ", data = train)", sep="" )
+                            eval(parse(text=txt))
+                            
+                            txt = paste('df$', i, "_lm_interaction_", j, "_interaction_", w ,  "= model$coefficients[1] + model$coefficients[2]*df$", i, "+ model$coefficients[3] *df$",j , "+ model$coefficients[4] *df$",w , sep="" )
+                            eval(parse(text=txt))
+                    
+                        }
+            }
+        }
+    }
+    return(df)
+}
+
+
+
+
+
+create_interactions_poly <- function(df, lst, min_cor = -1)
+    {
+    
+    for(i in lst)
+        {
+        for(j in lst)
+            {
+            txt = paste('abs(cor(df$', i, ",df$", j , "))", sep="" )
+            
+            if (i != j  & eval(parse(text=txt)) > min_cor & !(paste(j, "_interaction_", i,"pow2", sep="") %in% colnames(df)) )
+                        {
+                            txt = paste('df$', i, "_interaction_", j ,"pow2 = df$", i, "* df$",j ,"^2", sep="" )
+                            eval(parse(text=txt))
+                        }
+                }
+    }
+    return(df)
+}
+
+collapse_categories <- function(df)
+    {
+    
+    df$cat = ifelse(df$f11 == 0 & df$f15 == 0 & df$f19 == 0 & df$f23 == 0, 1,
+                         ifelse(df$f11 == 0 & df$f15 == 0 & df$f19 == 0 & df$f23 == 1, 2 ,
+                                ifelse(df$f11 == 0 & df$f15 == 0 & df$f19 == 1 & df$f23 == 0, 3,
+                                       ifelse(df$f11 == 0 & df$f15 == 0 & df$f19 == 1 & df$f23 == 1,4,
+                                              ifelse(df$f11 == 0 & df$f15 == 1 & df$f19 == 0 & df$f23 == 0,5,
+                                                     ifelse(df$f11 == 0 & df$f15 == 1 & df$f19 == 0 & df$f23 == 1,6, 
+                                                            ifelse(df$f11 == 0 & df$f15 == 1 & df$f19 == 1 & df$f23 == 0,7, 
+                                                                   ifelse(df$f11 == 1 & df$f15 == 0 & df$f19 == 0 & df$f23 == 0,8, 
+                                                                          ifelse(df$f11 == 1 & df$f15 == 0 & df$f19 == 0 & df$f23 == 1,9, 
+                                                                                 ifelse(df$f11 == 1 & df$f15 == 0 & df$f19 == 1 & df$f23 == 0,10, 11))))))))))
+    
+    df$x1 = ifelse(df$cat == 1 , 1, 0)
+    df$x2 = ifelse(df$cat == 2 , 1, 0)
+    df$x3 = ifelse(df$cat == 3 , 1, 0)
+    df$x4 = ifelse(df$cat == 4 , 1, 0)
+    df$x5 = ifelse(df$cat == 5 , 1, 0)
+    df$x6 = ifelse(df$cat == 6 , 1, 0)
+    df$x7 = ifelse(df$cat == 7 , 1, 0)
+    df$x8 = ifelse(df$cat == 8 , 1, 0)
+    df$x9 = ifelse(df$cat == 9 , 1, 0)
+    df$x10 = ifelse(df$cat == 10 , 1, 0)
+    df$x11 = ifelse(df$cat == 11 , 1, 0)
+    df$cat = NULL
+    df$f11 = NULL 
+    df$f15 = NULL
+    df$f19 = NULL 
+    df$f23 = NULL
+    
+    return(df)
+}
+
+
+poly_transform2 <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_poly2 = df$", i, "^1 + df$", i, "^2",  sep="" )
+        eval(parse(text=txt))
+    }
+    return(df)
+}
+
+poly_transform3 <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_poly3 = df$", i, "^1 + df$", i, "^2 + df$", i, "^3",  sep="" )
+         eval(parse(text=txt))
+        
+    }
+    return(df)
+}
+
+sqrt_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_sqrt = df$", i, "^1 + df$", i, "^0.5",  sep="" )
+         eval(parse(text=txt))
+        
+    }
+    return(df)
+}
+
+
+rec_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_rec = 1/ (1+ df$", i, ")",  sep="" )
+        eval(parse(text=txt))
+    }
+    return(df)
+}
+
+exp_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_exp = exp(df$", i, ") / (1 + exp(df$",i, "))" ,  sep="" )
+        eval(parse(text=txt))
+    }
+    return(df)
+}
+
+sin_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_sin = sin(df$", i, ")",  sep="" )
+        eval(parse(text=txt))
+    }
+    return(df)
+}
+
+cos_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+        txt = paste('df$', i, "_cos = cos(df$", i, ")",  sep="" )
+        eval(parse(text=txt))
+    }
+    return(df)
+}
+
+quartile_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+                  txt = paste('as.numeric(quantile(df$', i, ", probs=c(0.25)))" ,   sep="" )
+                  qrt1 = eval(parse(text=txt))
+                  
+                  txt = paste('as.numeric(quantile(df$', i, ", probs=c(0.5)))" ,   sep="" )
+                  qrt2 = eval(parse(text=txt))
+                  
+                  txt = paste('as.numeric(quantile(df$', i, ", probs=c(0.75)))" ,   sep="" )
+                  qrt3 = eval(parse(text=txt))
+                  
+                  txt = paste('df$', i, "_1st_qrt = ifelse ( df$", i, " <= ", qrt1, ", 1, 0 )" ,   sep="" )
+                  eval(parse(text=txt))
+                  
+                  txt = paste('df$', i, "_2nd_qrt = ifelse ( df$", i, " > ", qrt1, " & df$", i, " <= ", qrt2, ", 1, 0 )" ,   sep="" )
+                  eval(parse(text=txt))
+                  
+                  txt = paste('df$', i, "_3rd_qrt = ifelse ( df$", i, " > ", qrt2, " & df$", i, " <= ", qrt3, ", 1, 0 )" ,   sep="" )
+                  eval(parse(text=txt))
+                  
+                  txt = paste('df$', i, "_4th_qrt = ifelse ( df$", i, " > ", qrt3, ", 1, 0 )" ,   sep="" )
+                  eval(parse(text=txt))
+        
+    }
+    return(df)
+}
+
+binary_transform <- function(df, lst)
+    {
+    for(i in lst)
+        {
+    txt = paste('df$', i, "_binary = ifelse ( abs(df$", i, ") >0, 1,0)",    sep="" )
+    eval(parse(text=txt))
+    
+    }
+    return(df)
+}
+
+
+new_features <- function(df, lst)
+    {
+    txt2 = ""
+    txt3 = ""
+
+    for(i in lst)
+        {
+        txt2 = paste(txt2, " + df$", i, sep ="")
+        txt3 = paste(txt3, ' + ifelse(abs(df$', i, ') < 0.00001 , 1 , 0)',  sep="" )
+        }
+   
+    txt2 = paste("df$sum_var = ", txt2, sep ="")
+    txt3 = paste('df$num_zeros = ', txt3,  sep="" )
+    
+    eval(parse(text=txt2)) 
+    eval(parse(text=txt3))
+
+    return(df)
+}
+
+```
+
+```{r Cleanup Tasks (didn't use in the end)}
+df = read.csv('traindata.csv')
+
+# CHECK NEAR ZERO VARIANCE: Didn't apply.
+#http://topepo.github.io/caret/pre-processing.html
+# such cases must be deleted
+nzv <- nearZeroVar(df, saveMetrics= TRUE)
+nzv
+
+# FIND LINEAR COMBOS: Let parameter selection decide. Didn't improve AUC when used. 
+comboInfo <- findLinearCombos(df)
+comboInfo
+#df[, -comboInfo$remove]
+
+# BOX-COX TRANSFORMATION: Didn't improve AUC
+preProcValues <- preProcess(df, method = "BoxCox")
+BC <- predict(preProcValues, df)
+#df = cbind(df_temp, BC)
+
+```
+
+
